@@ -56,7 +56,7 @@ class PermissionsService(val context: Context) : InternalModule, Permissions, Li
   @Throws(IllegalStateException::class)
   override fun onCreate(moduleRegistry: ModuleRegistry) {
     mActivityProvider = moduleRegistry.getModule(ActivityProvider::class.java)
-        ?: throw IllegalStateException("Couldn't find implementation for ActivityProvider.")
+      ?: throw IllegalStateException("Couldn't find implementation for ActivityProvider.")
     moduleRegistry.getModule(UIManager::class.java).registerLifecycleEventListener(this)
     mAskedPermissionsCache = context.applicationContext.getSharedPreferences(PREFERENCE_FILENAME, Context.MODE_PRIVATE)
   }
@@ -195,12 +195,12 @@ class PermissionsService(val context: Context) : InternalModule, Permissions, Li
       else -> PermissionsStatus.UNDETERMINED
     }
     return PermissionsResponse(
-        status,
-        if (status == PermissionsStatus.DENIED) {
-          canAskAgain(permission)
-        } else {
-          true
-        }
+      status,
+      if (status == PermissionsStatus.DENIED) {
+        canAskAgain(permission)
+      } else {
+        true
+      }
     )
   }
 
@@ -215,7 +215,15 @@ class PermissionsService(val context: Context) : InternalModule, Permissions, Li
 
     mActivityProvider?.currentActivity?.run {
       if (this is PermissionAwareActivity) {
-        this.requestPermissions(permissions, PERMISSIONS_REQUEST) { requestCode, receivePermissions, grantResults ->
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+          // It's not possible to ask for the permissions in the runtime.
+          // We return to the user the permissions status, which was granted during installation.
+          val permissionsResult = permissions.map { getManifestPermission(it) }.toIntArray()
+          listener.onResult(parseNativeResult(permissions, permissionsResult))
+          return
+        }
+
+        requestPermissions(permissions, PERMISSIONS_REQUEST) { requestCode, receivePermissions, grantResults ->
           return@requestPermissions if (requestCode == PERMISSIONS_REQUEST) {
             listener.onResult(parseNativeResult(receivePermissions, grantResults))
             true
