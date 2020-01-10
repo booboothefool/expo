@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { ThemeContext } from 'react-navigation';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { AppearanceProvider, useColorScheme } from 'react-native-appearance';
 import DevIndicator from '../components/DevIndicator';
@@ -25,8 +26,9 @@ import requestCameraPermissionsAsync from '../utils/requestCameraPermissionsAsyn
 import { StyledView, StyledScrollView } from '../components/Views';
 import { StyledText } from '../components/Text';
 import LocalStorage from '../storage/LocalStorage';
+import * as DevMenu from './DevMenu';
 
-let MENU_NARROW_SCREEN = Dimensions.get('window').width < 375;
+const MENU_NARROW_SCREEN = Dimensions.get('window').width < 375;
 
 // These are defined in EXVersionManager.m in a dictionary, ordering needs to be
 // done here.
@@ -39,123 +41,73 @@ const DEV_MENU_ORDER = [
   'dev-inspector',
 ];
 
-class MenuView extends React.Component {
+const MENU_ITEMS_ICON_MAPPINGS = {
+  'dev-hmr': 'run-fast',
+  'dev-remote-debug': 'remote-desktop',
+  'dev-perf-monitor': 'speedometer',
+  'dev-inspector': 'border-style',
+};
+
+class MenuView extends React.PureComponent {
   _scrollPosition = new Animated.Value(0);
 
   constructor(props, context) {
     super(props, context);
 
+    console.log('MenuView constructor');
     this.state = {
       enableDevMenuTools: false,
       devMenuItems: {},
       isNuxFinished: false,
-      isLoading: false,
       isLoaded: false,
     };
   }
 
   async componentDidMount() {
-    this._mounted = true;
-    this.forceStatusBarUpdateAsync();
-  }
-
-  componentWillUnmount() {
-    this.restoreStatusBar();
-    this._mounted = false;
-  }
-
-  // NOTE(brentvatne): moving this to didmount, didupdate, or constructor does not work
-  UNSAFE_componentWillReceiveProps() {
-    if (!this.state.isLoading) {
-      this._loadStateAsync();
-    }
-  }
-
-  componentDidUpdate(prevProps) {
-    if (prevProps.visible && !this.props.visible) {
-      this.restoreStatusBar();
-    } else if (!prevProps.visible && this.props.visible) {
-      this.forceStatusBarUpdateAsync();
-      this._scrollPosition.setValue(0);
-    }
+    console.log('componentDidMount');
+    this._loadStateAsync();
   }
 
   _loadStateAsync = async () => {
-    this.setState({ isLoading: true, isLoaded: false }, async () => {
+    console.log('_loadStateAsync', this.state.isLoaded);
+    this.setState({ isLoaded: false }, async () => {
       const enableDevMenuTools = await Kernel.doesCurrentTaskEnableDevtoolsAsync();
-      const devMenuItems = await Kernel.getDevMenuItemsToShowAsync();
-      const isNuxFinished = await Kernel.isNuxFinishedAsync();
-      if (this._mounted) {
-        this.setState({
-          enableDevMenuTools,
-          devMenuItems,
-          isNuxFinished,
-          isLoading: false,
-          isLoaded: true,
-        });
-      }
+      const devMenuItems = await DevMenu.getItemsToShowAsync();
+      const isNuxFinished = await DevMenu.isNuxFinishedAsync();
+
+      console.log('_loadStateAsync done');
+
+      this.setState({
+        enableDevMenuTools,
+        devMenuItems,
+        isNuxFinished,
+        isLoaded: true,
+      });
     });
-  };
-
-  forceStatusBarUpdateAsync = async () => {
-    if (NativeModules.StatusBarManager._captureProperties) {
-      this._statusBarValuesToRestore = await NativeModules.StatusBarManager._captureProperties();
-      // HACK: StatusBar only updates changed props.
-      // because MenuView typically lives under a different RN bridge, its stack of StatusBar
-      // props does not necessarily reflect what the user is seeing.
-      // so we force StatusBar to clear its state and update all props when we mount.
-      StatusBar._currentValues = null;
-    }
-  };
-
-  restoreStatusBar = () => {
-    if (
-      NativeModules.StatusBarManager._applyPropertiesAndForget &&
-      this._statusBarValuesToRestore
-    ) {
-      NativeModules.StatusBarManager._applyPropertiesAndForget(this._statusBarValuesToRestore);
-    }
   };
 
   _handleScroll = ({ nativeEvent }) => {
     let y = nativeEvent.contentOffset.y;
     this._scrollPosition.setValue(y);
     if (y <= -150) {
-      this._onPressClose();
+      DevMenu.closeAsync();
     }
   };
 
   render() {
+    console.log('isLoaded', this.state.isLoaded);
     if (!this.state.isLoaded) {
-      return <View />;
+      return null;
     }
 
-    let copyUrlButton;
-    if (this.props.task && this.props.task.manifestUrl) {
-      copyUrlButton = (
-        <MenuButton
-          key="copy"
-          label="Copy link to clipboard"
-          onPress={this._copyTaskUrl}
-          iconSource={require('../assets/ios-menu-copy.png')}
-        />
-      );
-    }
-
-    const screenStyles = {
-      width: Dimensions.get('window').width,
-      height: Dimensions.get('window').height,
-    };
-
-    const { theme } = this.props;
-
-    let opacity = this._scrollPosition.interpolate({
+    const { task, theme } = this.props;
+    const opacity = this._scrollPosition.interpolate({
       inputRange: [-150, 0, 1],
       outputRange: [0.5, 1, 1],
     });
 
     return (
-      <StyledView style={[styles.container, screenStyles]} darkBackgroundColor="#000">
+      <StyledView style={styles.container} darkBackgroundColor="#000">
         <Animated.View style={{ flex: 1, opacity }}>
           <StatusBar barStyle={theme === 'light' ? 'dark-content' : 'light-content'} />
           <StyledScrollView
@@ -168,21 +120,28 @@ class MenuView extends React.Component {
               <MenuButton
                 key="reload"
                 label="Reload"
-                onPress={Kernel.selectRefresh}
-                iconSource={require('../assets/ios-menu-refresh.png')}
+                onPress={DevMenu.reloadAppAsync}
+                icon="reload"
               />
-              {copyUrlButton}
+              {task && task.manifestUrl && (
+                <MenuButton
+                  key="copy"
+                  label="Copy link to clipboard"
+                  onPress={this._copyTaskUrl}
+                  icon="clipboard-text"
+                />
+              )}
               <MenuButton
                 key="home"
                 label="Go to Home"
-                onPress={this._goToHome}
-                iconSource={require('../assets/ios-menu-home.png')}
+                onPress={DevMenu.goToHomeAsync}
+                icon="home"
               />
             </View>
             {this._maybeRenderDevMenuTools()}
             <TouchableHighlight
               style={styles.closeButton}
-              onPress={this._onPressClose}
+              onPress={DevMenu.closeAsync}
               underlayColor="#eee"
               hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}>
               <Image
@@ -227,11 +186,13 @@ class MenuView extends React.Component {
 
   _renderTaskInfoRow() {
     let { task } = this.props;
-    let taskUrl;
-    taskUrl = task.manifestUrl ? FriendlyUrls.toFriendlyString(task.manifestUrl) : '';
+    let taskUrl, iconUrl, taskName;
 
-    let iconUrl = task.manifest && task.manifest.iconUrl;
-    let taskName = task.manifest && task.manifest.name;
+    if (task) {
+      taskUrl = task.manifestUrl ? FriendlyUrls.toFriendlyString(task.manifestUrl) : '';
+      iconUrl = task.manifest && task.manifest.iconUrl;
+      taskName = task.manifest && task.manifest.name;
+    }
 
     let icon = iconUrl ? (
       <Image source={{ uri: iconUrl }} style={styles.taskIcon} />
@@ -258,7 +219,7 @@ class MenuView extends React.Component {
   _maybeRenderDevServerName() {
     let { task } = this.props;
     let devServerName =
-      task.manifest && task.manifest.developer ? task.manifest.developer.tool : null;
+      task && task.manifest && task.manifest.developer ? task.manifest.developer.tool : null;
     if (devServerName) {
       return (
         <View style={{ flexDirection: 'row' }}>
@@ -297,7 +258,7 @@ class MenuView extends React.Component {
         key={key}
         label={label}
         onPress={() => this._onPressDevMenuButton(key)}
-        iconSource={null}
+        icon={MENU_ITEMS_ICON_MAPPINGS[key]}
         withSeparator={false}
         isEnabled={isEnabled}
         detail={detail}
@@ -314,24 +275,18 @@ class MenuView extends React.Component {
   };
 
   _onPressFinishNux = () => {
-    Kernel.setNuxFinishedAsync(true);
-    Kernel.selectCloseMenu();
-  };
-
-  _onPressClose = () => {
-    Kernel.selectCloseMenu();
-  };
-
-  _goToHome = () => {
-    Kernel.selectGoToHome();
+    DevMenu.setNuxFinishedAsync(true);
+    DevMenu.closeAsync();
   };
 
   _copyTaskUrl = () => {
-    Clipboard.setString(this.props.task.manifestUrl);
+    const { manifestUrl } = this.props.task;
+    alert(`Copied "${manifestUrl}" to the clipboard!`);
+    Clipboard.setString(manifestUrl);
   };
 
   _onPressDevMenuButton = key => {
-    Kernel.selectDevMenuItemWithKey(key);
+    DevMenu.selectItemWithKeyAsync(key);
   };
 }
 
@@ -354,7 +309,7 @@ const LabelNameOverrides = {
   'Reload JS Bundle': 'Reload JS Bundle only',
 };
 
-function MenuButton({ label, onPress, iconSource, withSeparator, isEnabled, detail }) {
+function MenuButton({ label, onPress, icon, withSeparator, isEnabled, detail }) {
   if (typeof isEnabled === 'undefined') {
     isEnabled = true;
   }
@@ -363,14 +318,7 @@ function MenuButton({ label, onPress, iconSource, withSeparator, isEnabled, deta
     label = LabelNameOverrides[label];
   }
 
-  let [showDetails, setShowDetails] = React.useState(true);
-
-  let icon;
-  if (iconSource) {
-    icon = <Image style={styles.buttonIcon} source={iconSource} />;
-  } else {
-    icon = <View style={styles.buttonIcon} />;
-  }
+  const [showDetails, setShowDetails] = React.useState(true);
 
   if (isEnabled) {
     const buttonStyles = withSeparator
@@ -379,7 +327,11 @@ function MenuButton({ label, onPress, iconSource, withSeparator, isEnabled, deta
 
     return (
       <TouchableOpacity style={buttonStyles} onPress={onPress}>
-        {icon}
+        {icon && (
+          <View style={styles.buttonIcon}>
+            <MaterialCommunityIcons name={icon} size={20} color="#2F9BE4" />
+          </View>
+        )}
         <StyledText style={styles.buttonText} lightColor="#595c68">
           {label}
         </StyledText>
@@ -446,8 +398,10 @@ const HomeMenu = props => {
     theme = 'light';
   }
 
+  // console.warn('HomeMenu rerender');
+
   return (
-    <AppearanceProvider>
+    <AppearanceProvider style={styles.rootView}>
       <ThemeContext.Provider value={theme}>
         <MenuView {...props} theme={theme} />
       </ThemeContext.Provider>
@@ -456,7 +410,12 @@ const HomeMenu = props => {
 };
 
 let styles = StyleSheet.create({
-  container: {},
+  rootView: {
+    flex: 1,
+  },
+  container: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     marginTop: Constants.statusBarHeight,
@@ -529,11 +488,9 @@ let styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth * 2,
   },
   buttonIcon: {
-    width: 16,
-    height: 16,
     marginVertical: 12,
     marginLeft: 20,
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
   },
   buttonText: {
     fontSize: 14,

@@ -25,19 +25,12 @@
 
 @implementation EXMenuViewController
 
-- (instancetype)init
-{
-  if (self = [super init]) {
-    [self _maybeRebuildRootView];
-  }
-  return self;
-}
-
 - (void)viewDidLoad
 {
   [super viewDidLoad];
   self.view.backgroundColor = [UIColor whiteColor];
 
+  [self _maybeRebuildRootView];
   [self.view addSubview:_reactRootView];
 }
 
@@ -61,12 +54,11 @@
 {
   [super viewWillAppear:animated];
   [self _maybeRebuildRootView];
-  [self _updateMenuPropsWithVisibility:TRUE];
+  [self _forceRootViewToRenderHack];
 }
 
 - (void)viewWillDisappear:(BOOL)animated
 {
-  [self _updateMenuPropsWithVisibility:FALSE];
 }
 
 - (BOOL)shouldAutorotate
@@ -81,26 +73,23 @@
 
 #pragma mark - internal
 
-- (void)_updateMenuPropsWithVisibility:(BOOL)visible
+- (NSDictionary *)_getInitialPropsForVisibleApp
 {
   EXKernelAppRecord *visibleApp = [EXKernel sharedInstance].visibleApp;
   NSDictionary *task = @{
     @"manifestUrl": visibleApp.appLoader.manifestUrl.absoluteString,
     @"manifest": (visibleApp.appLoader.manifest) ? visibleApp.appLoader.manifest : [NSNull null],
   };
-  // include randomness to force the component to rerender
-  NSDictionary *menuProps = @{ @"task": task, @"uuid": [[NSUUID UUID] UUIDString], @"visible": [NSNumber numberWithBool:visible] };
-  [EXUtil performSynchronouslyOnMainThread:^{
-    [self _forceRootViewToRenderHack];
-    self->_reactRootView.frame = self.view.bounds;
-    self->_reactRootView.sizeFlexibility = RCTRootViewSizeFlexibilityWidthAndHeight;
-    self->_reactRootView.appProperties = menuProps;
-  }];
+
+  return @{
+    @"task": task,
+    @"uuid": [[NSUUID UUID] UUIDString], // include randomness to force the component to rerender
+    @"visible": [NSNumber numberWithBool:YES]
+  };
 }
 
-
-  // RCTRootView assumes it is created on a loading bridge.
-  // in our case, the bridge has usually already loaded. so we need to prod the view.
+// RCTRootView assumes it is created on a loading bridge.
+// in our case, the bridge has usually already loaded. so we need to prod the view.
 - (void)_forceRootViewToRenderHack
 {
   if (!_hasCalledJSLoadedNotification) {
@@ -122,7 +111,10 @@
       _reactRootView = nil;
     }
     _hasCalledJSLoadedNotification = NO;
-    _reactRootView = [[RCTRootView alloc] initWithBridge:[self _homeReactBridge] moduleName:@"HomeMenu" initialProperties:@{}];
+
+    _reactRootView = [[RCTRootView alloc] initWithBridge:[self _homeReactBridge] moduleName:@"HomeMenu" initialProperties:[self _getInitialPropsForVisibleApp]];
+    _reactRootView.frame = self.view.bounds;
+
     if ([self isViewLoaded]) {
       [self.view addSubview:_reactRootView];
       [self.view setNeedsLayout];
